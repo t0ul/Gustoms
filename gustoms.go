@@ -54,6 +54,7 @@ var (
 	ErrPinMismatch    = errors.New("gustoms: tool manifest changed since approval (possible rug-pull); re-approval required")
 	ErrToolNotAllowed = errors.New("gustoms: tool not permitted for this server")
 	ErrForbidden      = errors.New("gustoms: caller not authorized for this tool")
+	ErrNotApproved    = errors.New("gustoms: server has no approved manifest pin (strict pinning); operator must Approve it first")
 )
 
 // Gateway brokers calls to approved MCP servers.
@@ -62,6 +63,7 @@ type Gateway struct {
 	servers map[string]*entry
 	authz   Authorizer
 	auditor Auditor
+	strict  bool
 }
 
 type entry struct {
@@ -89,6 +91,11 @@ func WithAuthorizer(a Authorizer) Option { return func(g *Gateway) { g.authz = a
 
 // WithAuditor attaches an audit sink.
 func WithAuditor(a Auditor) Option { return func(g *Gateway) { g.auditor = a } }
+
+// WithStrictPinning disables trust-on-first-use: a server with no operator-set
+// pin is refused until Approve has recorded its manifest. Prefer this in
+// production so a first fetch that is already malicious is never auto-trusted.
+func WithStrictPinning() Option { return func(g *Gateway) { g.strict = true } }
 
 // New builds a Gateway.
 func New(opts ...Option) *Gateway {
@@ -132,6 +139,11 @@ func (g *Gateway) Call(ctx context.Context, traceID, caller, server, tool string
 
 	g.mu.Lock()
 	if e.pin == "" {
+		if g.strict {
+			g.mu.Unlock()
+			g.audit(traceID, "deny", map[string]any{"reason": "not_approved", "server": server})
+			return nil, fmt.Errorf("%w: %q", ErrNotApproved, server)
+		}
 		e.pin = h // trust-on-first-use: lock the manifest we first saw
 		g.audit(traceID, "pin", map[string]any{"server": server, "hash": h[:12], "mode": "tofu"})
 	}

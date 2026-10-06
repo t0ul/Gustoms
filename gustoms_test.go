@@ -86,6 +86,25 @@ func TestAuthorizerForbids(t *testing.T) {
 	}
 }
 
+func TestStrictPinningRefusesUnapproved(t *testing.T) {
+	srv := fetchServer("ok")
+	g := gustoms.New(
+		gustoms.WithServer(gustoms.Server{Name: "search", Client: srv}), // no Pin
+		gustoms.WithStrictPinning(),
+	)
+	// No operator approval yet -> refused (no blind TOFU).
+	if _, err := g.Call(context.Background(), "t", "agent", "search", "web_fetch", nil); !errors.Is(err, gustoms.ErrNotApproved) {
+		t.Fatalf("strict pinning must refuse an unapproved server, got %v", err)
+	}
+	// After the operator approves the current manifest, calls succeed.
+	if err := g.Approve(context.Background(), "t", "search"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Call(context.Background(), "t", "agent", "search", "web_fetch", nil); err != nil {
+		t.Fatalf("approved server should serve, got %v", err)
+	}
+}
+
 func TestTOFUPinsFirstManifest(t *testing.T) {
 	srv := fetchServer("ok")
 	g := gustoms.New(gustoms.WithServer(gustoms.Server{Name: "search", Client: srv})) // no Pin -> TOFU
