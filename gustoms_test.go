@@ -116,3 +116,18 @@ func TestTOFUPinsFirstManifest(t *testing.T) {
 		t.Fatalf("manifest change after TOFU must mismatch, got %v", err)
 	}
 }
+
+func TestWithPinRecorderOnApprove(t *testing.T) {
+	srv := fetchServer("ok")
+	var gotServer, gotHash string
+	gw := gustoms.New(
+		gustoms.WithServer(gustoms.Server{Name: "search", Client: srv, AllowedTools: []string{"web_fetch"}}),
+		gustoms.WithPinRecorder(func(server, hash string) { gotServer, gotHash = server, hash }),
+	)
+	if err := gw.Approve(context.Background(), "t", "search"); err != nil {
+		t.Fatal(err)
+	}
+	if gotServer != "search" || gotHash != gustoms.ManifestHash(srv.tools) {
+		t.Fatalf("pin recorder not called with the approved manifest: server=%q hash=%q", gotServer, gotHash)
+	}
+}

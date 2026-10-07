@@ -64,6 +64,7 @@ type Gateway struct {
 	authz   Authorizer
 	auditor Auditor
 	strict  bool
+	pinRec  func(server, hash string)
 }
 
 type entry struct {
@@ -91,6 +92,13 @@ func WithAuthorizer(a Authorizer) Option { return func(g *Gateway) { g.authz = a
 
 // WithAuditor attaches an audit sink.
 func WithAuditor(a Auditor) Option { return func(g *Gateway) { g.auditor = a } }
+
+// WithPinRecorder sets a durable sink for approved manifest pins — called when a
+// server is (re-)approved, so the pin survives a restart and is attributable
+// (wire it to cpstore.RecordPin). In-memory pinning is unchanged.
+func WithPinRecorder(rec func(server, hash string)) Option {
+	return func(g *Gateway) { g.pinRec = rec }
+}
 
 // WithStrictPinning disables trust-on-first-use: a server with no operator-set
 // pin is refused until Approve has recorded its manifest. Prefer this in
@@ -204,6 +212,9 @@ func (g *Gateway) Approve(ctx context.Context, traceID, server string) error {
 	e.pin = h
 	g.mu.Unlock()
 	g.audit(traceID, "approve", map[string]any{"server": server, "hash": h[:12]})
+	if g.pinRec != nil {
+		g.pinRec(server, h)
+	}
 	return nil
 }
 
