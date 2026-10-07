@@ -218,6 +218,63 @@ func (g *Gateway) Approve(ctx context.Context, traceID, server string) error {
 	return nil
 }
 
+// ServerStatus is a read-only snapshot of one registered MCP server for an
+// operator console: its advertised tools, the allow-list, the approved pin, the
+// live manifest hash, and whether they diverge (a possible rug-pull).
+type ServerStatus struct {
+	Name     string   `json:"name"`
+	Tools    []string `json:"tools"`
+	Allowed  []string `json:"allowed"`
+	Pinned   string   `json:"pinned"`   // approved manifest hash (hex); empty = not yet approved
+	Current  string   `json:"current"`  // live manifest hash (hex); empty if ListTools failed
+	Mismatch bool     `json:"mismatch"` // Current != Pinned (pin set): re-approval needed
+	Err      string   `json:"err,omitempty"`
+}
+
+// Status snapshots every registered server for display. It calls each server's
+// ListTools, so it reflects the live manifest and surfaces a rug-pull as a
+// Mismatch. Read-only — it never changes a pin.
+func (g *Gateway) Status(ctx context.Context) []ServerStatus {
+	g.mu.Lock()
+	names := make([]string, 0, len(g.servers))
+	for n := range g.servers {
+		names = append(names, n)
+	}
+	g.mu.Unlock()
+	sort.Strings(names)
+
+	out := make([]ServerStatus, 0, len(names))
+	for _, n := range names {
+		g.mu.Lock()
+		e := g.servers[n]
+		pinned, client := e.pin, e.srv.Client
+		allowed := make([]string, 0, len(e.allowed))
+		for t := range e.allowed {
+			allowed = append(allowed, t)
+		}
+		g.mu.Unlock()
+		sort.Strings(allowed)
+
+		st := ServerStatus{Name: n, Allowed: allowed, Pinned: pinned}
+		tools, err := client.ListTools(ctx)
+		if err != nil {
+			st.Err = err.Error()
+			out = append(out, st)
+			continue
+		}
+		toolNames := make([]string, len(tools))
+		for i, t := range tools {
+			toolNames[i] = t.Name
+		}
+		sort.Strings(toolNames)
+		st.Tools = toolNames
+		st.Current = ManifestHash(tools)
+		st.Mismatch = pinned != "" && st.Current != pinned
+		out = append(out, st)
+	}
+	return out
+}
+
 func (g *Gateway) audit(traceID, event string, fields map[string]any) {
 	if g.auditor != nil {
 		g.auditor.Emit(traceID, "gustoms", event, fields)
